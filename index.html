@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>30명 사다리 타기</title>
+<title>사다리 타기</title>
 <style>
   :root {
     --bg: #f5f6fa; --card: #ffffff; --text: #222; --muted: #777;
@@ -25,6 +25,10 @@
   .row { display: flex; gap: 16px; flex-wrap: wrap; }
   .row > div { flex: 1 1 300px; }
   label { font-weight: 600; font-size: 14px; display: block; margin-bottom: 6px; }
+  #countInput {
+    width: 80px; font: inherit; font-size: 15px; padding: 7px 8px;
+    border: 1px solid var(--border); border-radius: 8px;
+  }
   textarea {
     width: 100%; height: 110px; font: inherit; font-size: 13px; padding: 8px;
     border: 1px solid var(--border); border-radius: 8px; resize: vertical;
@@ -59,12 +63,18 @@
 </head>
 <body>
 <header>
-  <h1>🪜 30명 사다리 타기</h1>
+  <h1>🪜 사다리 타기</h1>
   <p>이름과 결과를 입력하고, 위쪽 이름을 누르면 사다리를 타고 내려갑니다.</p>
 </header>
 
 <div class="wrap">
   <div class="card">
+    <div class="controls" style="margin:0 0 12px">
+      <label for="countInput" style="margin:0">인원수</label>
+      <input type="number" id="countInput" min="2" max="100" value="30">
+      <button id="countBtn" class="secondary">인원 적용</button>
+      <span class="hint" style="margin:0">2~100명. 적용하면 참가자 칸이 인원수에 맞게 채워집니다.</span>
+    </div>
     <div class="row">
       <div>
         <label for="namesInput">참가자 (쉼표 또는 줄바꿈으로 구분)</label>
@@ -114,6 +124,7 @@
   const summaryCard = document.getElementById('summaryCard');
   const resultGrid = document.getElementById('resultGrid');
   const hideChk = document.getElementById('hideResults');
+  const countInput = document.getElementById('countInput');
 
   let names = [], results = [], rungs = [], paths = [], done = {}, animating = false;
 
@@ -134,7 +145,26 @@
     document.getElementById('resultCount').textContent =
       '결과 ' + r + '개' + (r < n ? ' (+ 꽝 ' + (n - r) + '개)' : r > n ? ' (참가자 수만큼만 사용)' : '');
   }
-  namesInput.addEventListener('input', updateCounts);
+  namesInput.addEventListener('input', () => {
+    updateCounts();
+    const n = parse(namesInput.value).length;
+    if (n >= 2) countInput.value = n;
+  });
+
+  // 인원수 적용: 입력한 이름은 유지하고, 모자라면 'N번'으로 채우고 넘치면 잘라냄
+  function applyCount() {
+    let n = parseInt(countInput.value, 10);
+    if (isNaN(n)) n = 30;
+    n = Math.max(2, Math.min(100, n));
+    countInput.value = n;
+    const cur = parse(namesInput.value).slice(0, n);
+    for (let i = cur.length; i < n; i++) cur.push((i + 1) + '번');
+    namesInput.value = cur.join(', ');
+    updateCounts();
+    build();
+  }
+  document.getElementById('countBtn').addEventListener('click', applyCount);
+  countInput.addEventListener('keydown', e => { if (e.key === 'Enter') applyCount(); });
   resultsInput.addEventListener('input', updateCounts);
 
   function shuffle(a) {
