@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>30명 사다리 타기</title>
+<style>
+  :root {
+    --bg: #f5f6fa; --card: #ffffff; --text: #222; --muted: #777;
+    --line: #444; --accent: #4f6bed; --border: #dde1ea;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: "Pretendard", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  header { text-align: center; padding: 20px 16px 8px; }
+  header h1 { margin: 0; font-size: 26px; }
+  header p { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 12px 16px 40px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px; margin-bottom: 16px;
+  }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .row > div { flex: 1 1 300px; }
+  label { font-weight: 600; font-size: 14px; display: block; margin-bottom: 6px; }
+  textarea {
+    width: 100%; height: 110px; font: inherit; font-size: 13px; padding: 8px;
+    border: 1px solid var(--border); border-radius: 8px; resize: vertical;
+  }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  button {
+    font: inherit; font-size: 14px; padding: 9px 16px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--accent); background: var(--accent); color: #fff;
+  }
+  button.secondary { background: #fff; color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .count { font-size: 14px; color: var(--muted); }
+  .board { overflow-x: auto; }
+  .ladder { position: relative; margin: 0 auto; }
+  .names, .results { display: grid; gap: 0; }
+  .names button, .results div {
+    margin: 2px; padding: 6px 2px; font-size: 12px; border-radius: 6px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center;
+  }
+  .names button { border: 2px solid transparent; }
+  .names button.done { opacity: .75; }
+  .results div { background: #eef0f6; border: 2px solid transparent; }
+  .results div.hidden { color: transparent; background: #d6dae5; }
+  canvas { display: block; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { border-bottom: 1px solid var(--border); padding: 6px 8px; text-align: left; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+  #resultGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px 16px; }
+  #resultGrid div { padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🪜 30명 사다리 타기</h1>
+  <p>이름과 결과를 입력하고, 위쪽 이름을 누르면 사다리를 타고 내려갑니다.</p>
+</header>
+
+<div class="wrap">
+  <div class="card">
+    <div class="row">
+      <div>
+        <label for="namesInput">참가자 (쉼표 또는 줄바꿈으로 구분)</label>
+        <textarea id="namesInput"></textarea>
+        <div class="hint" id="nameCount"></div>
+      </div>
+      <div>
+        <label for="resultsInput">결과 (참가자 수보다 적으면 나머지는 '꽝')</label>
+        <textarea id="resultsInput"></textarea>
+        <div class="hint" id="resultCount"></div>
+      </div>
+    </div>
+    <div class="controls">
+      <button id="buildBtn">사다리 만들기</button>
+      <button id="allBtn" class="secondary">전체 결과 보기</button>
+      <button id="resetBtn" class="secondary">처음부터 다시</button>
+      <label style="display:flex;align-items:center;gap:6px;font-weight:400;margin:0">
+        <input type="checkbox" id="hideResults" checked> 결과 가리기
+      </label>
+    </div>
+  </div>
+
+  <div class="card board">
+    <div class="ladder" id="ladder">
+      <div class="names" id="names"></div>
+      <canvas id="canvas"></canvas>
+      <div class="results" id="results"></div>
+    </div>
+  </div>
+
+  <div class="card" id="summaryCard" style="display:none">
+    <label>결과</label>
+    <div id="resultGrid"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const COL_W = 46, HEIGHT = 520, ROWS = 26, MARGIN_Y = 10;
+  const namesInput = document.getElementById('namesInput');
+  const resultsInput = document.getElementById('resultsInput');
+  const namesEl = document.getElementById('names');
+  const resultsEl = document.getElementById('results');
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const ladderEl = document.getElementById('ladder');
+  const summaryCard = document.getElementById('summaryCard');
+  const resultGrid = document.getElementById('resultGrid');
+  const hideChk = document.getElementById('hideResults');
+
+  let names = [], results = [], rungs = [], paths = [], done = {}, animating = false;
+
+  // 기본값: 30명, 1등~3등 + 나머지 꽝
+  namesInput.value = Array.from({ length: 30 }, (_, i) => (i + 1) + '번').join(', ');
+  resultsInput.value = ['1등', '2등', '3등'].join(', ');
+
+  function parse(text) {
+    return text.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+  }
+  function color(i, n) {
+    return 'hsl(' + Math.round(i * 360 / n) + ', 70%, 45%)';
+  }
+  function updateCounts() {
+    const n = parse(namesInput.value).length;
+    const r = parse(resultsInput.value).length;
+    document.getElementById('nameCount').textContent = '참가자 ' + n + '명';
+    document.getElementById('resultCount').textContent =
+      '결과 ' + r + '개' + (r < n ? ' (+ 꽝 ' + (n - r) + '개)' : r > n ? ' (참가자 수만큼만 사용)' : '');
+  }
+  namesInput.addEventListener('input', updateCounts);
+  resultsInput.addEventListener('input', updateCounts);
+
+  function shuffle(a) {
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function build() {
+    names = parse(namesInput.value);
+    if (names.length < 2) { alert('참가자를 2명 이상 입력해 주세요.'); return; }
+    let r = parse(resultsInput.value).slice(0, names.length);
+    while (r.length < names.length) r.push('꽝');
+    results = shuffle(r);
+
+    const n = names.length;
+    // 가로줄 생성: 같은 행에서 인접한 가로줄이 겹치지 않게
+    rungs = [];
+    for (let row = 0; row < ROWS; row++) {
+      const line = new Array(n - 1).fill(false);
+      for (let c = 0; c < n - 1; c++) {
+        if ((c === 0 || !line[c - 1]) && Math.random() < 0.38) line[c] = true;
+      }
+      rungs.push(line);
+    }
+    // 모든 인접 기둥 사이에 최소 1개의 가로줄 보장
+    for (let c = 0; c < n - 1; c++) {
+      if (!rungs.some(l => l[c])) {
+        for (const row of shuffle([...Array(ROWS).keys()])) {
+          const l = rungs[row];
+          if (!(c > 0 && l[c - 1]) && !(c < n - 2 && l[c + 1])) { l[c] = true; break; }
+        }
+      }
+    }
+    paths = names.map((_, i) => tracePath(i));
+    done = {};
+    render();
+  }
+
+  function rowY(row) { return MARGIN_Y + (row + 1) * (HEIGHT - 2 * MARGIN_Y) / (ROWS + 1); }
+  function colX(c) { return c * COL_W + COL_W / 2; }
+
+  function tracePath(start) {
+    let c = start;
+    const pts = [[colX(c), 0]];
+    for (let row = 0; row < ROWS; row++) {
+      const y = rowY(row);
+      if (c < names.length - 1 && rungs[row][c]) {
+        pts.push([colX(c), y]); c++; pts.push([colX(c), y]);
+      } else if (c > 0 && rungs[row][c - 1]) {
+        pts.push([colX(c), y]); c--; pts.push([colX(c), y]);
+      }
+    }
+    pts.push([colX(c), HEIGHT]);
+    return { end: c, pts };
+  }
+
+  function render() {
+    const n = names.length;
+    const w = n * COL_W;
+    ladderEl.style.width = w + 'px';
+    const cols = 'repeat(' + n + ', ' + COL_W + 'px)';
+    namesEl.style.gridTemplateColumns = cols;
+    resultsEl.style.gridTemplateColumns = cols;
+
+    namesEl.innerHTML = '';
+    names.forEach((nm, i) => {
+      const b = document.createElement('button');
+      b.textContent = nm;
+      b.title = nm;
+      b.style.background = color(i, n);
+      b.style.borderColor = color(i, n);
+      b.addEventListener('click', () => runOne(i));
+      namesEl.appendChild(b);
+    });
+    resultsEl.innerHTML = '';
+    results.forEach((rs, i) => {
+      const d = document.createElement('div');
+      d.textContent = rs;
+      d.title = rs;
+      if (hideChk.checked) d.classList.add('hidden');
+      resultsEl.appendChild(d);
+    });
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = w * dpr; canvas.height = HEIGHT * dpr;
+    canvas.style.width = w + 'px'; canvas.style.height = HEIGHT + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawBase();
+    summaryCard.style.display = 'none';
+    resultGrid.innerHTML = '';
+  }
+
+  function drawBase() {
+    const n = names.length;
+    ctx.clearRect(0, 0, n * COL_W, HEIGHT);
+    ctx.strokeStyle = '#555'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (let c = 0; c < n; c++) { ctx.moveTo(colX(c), 0); ctx.lineTo(colX(c), HEIGHT); }
+    for (let row = 0; row < ROWS; row++) {
+      for (let c = 0; c < n - 1; c++) {
+        if (rungs[row][c]) { ctx.moveTo(colX(c), rowY(row)); ctx.lineTo(colX(c + 1), rowY(row)); }
+      }
+    }
+    ctx.stroke();
+    Object.keys(done).forEach(i => drawPath(+i, Infinity));
+  }
+
+  function drawPath(i, maxLen) {
+    const pts = paths[i].pts;
+    ctx.strokeStyle = color(i, names.length); ctx.lineWidth = 4; ctx.lineJoin = 'round';
+    ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+    let left = maxLen;
+    for (let k = 1; k < pts.length; k++) {
+      const [x0, y0] = pts[k - 1], [x1, y1] = pts[k];
+      const seg = Math.hypot(x1 - x0, y1 - y0);
+      if (left >= seg) { ctx.lineTo(x1, y1); left -= seg; }
+      else { const t = left / seg; ctx.lineTo(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t); break; }
+    }
+    ctx.stroke();
+  }
+
+  function pathLen(i) {
+    const pts = paths[i].pts; let s = 0;
+    for (let k = 1; k < pts.length; k++) s += Math.hypot(pts[k][0] - pts[k-1][0], pts[k][1] - pts[k-1][1]);
+    return s;
+  }
+
+  function reveal(i) {
+    const end = paths[i].end;
+    const cell = resultsEl.children[end];
+    cell.classList.remove('hidden');
+    cell.style.borderColor = color(i, names.length);
+    namesEl.children[i].classList.add('done');
+    done[i] = true;
+    updateSummary();
+  }
+
+  function runOne(i) {
+    if (animating || !paths.length) return;
+    if (done[i]) { drawBase(); highlight(i); return; }
+    animating = true;
+    const total = pathLen(i), speed = 1.4; // px/ms
+    const t0 = performance.now();
+    function step(now) {
+      const len = (now - t0) * speed;
+      drawBase();
+      drawPath(i, len);
+      if (len < total) requestAnimationFrame(step);
+      else { animating = false; reveal(i); drawBase(); highlight(i); }
+    }
+    requestAnimationFrame(step);
+  }
+
+  function highlight(i) {
+    ctx.save(); ctx.globalAlpha = 1; ctx.shadowColor = color(i, names.length); ctx.shadowBlur = 8;
+    drawPath(i, Infinity); ctx.restore();
+  }
+
+  function showAll() {
+    if (!paths.length || animating) return;
+    names.forEach((_, i) => { if (!done[i]) reveal(i); });
+    drawBase();
+  }
+
+  function updateSummary() {
+    const keys = Object.keys(done).map(Number).sort((a, b) => a - b);
+    if (!keys.length) { summaryCard.style.display = 'none'; return; }
+    summaryCard.style.display = '';
+    resultGrid.innerHTML = '';
+    keys.forEach(i => {
+      const d = document.createElement('div');
+      const sw = '<span class="swatch" style="background:' + color(i, names.length) + '"></span>';
+      d.innerHTML = sw;
+      d.appendChild(document.createTextNode(names[i] + ' → ' + results[paths[i].end]));
+      resultGrid.appendChild(d);
+    });
+  }
+
+  hideChk.addEventListener('change', () => {
+    [...resultsEl.children].forEach((d, idx) => {
+      const revealed = Object.keys(done).some(i => paths[i].end === idx);
+      d.classList.toggle('hidden', hideChk.checked && !revealed);
+    });
+  });
+
+  document.getElementById('buildBtn').addEventListener('click', build);
+  document.getElementById('allBtn').addEventListener('click', showAll);
+  document.getElementById('resetBtn').addEventListener('click', () => {
+    if (!paths.length) return;
+    done = {};
+    render();
+  });
+
+  updateCounts();
+  build();
+})();
+</script>
+</body>
+</html>
